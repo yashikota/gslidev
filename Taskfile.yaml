@@ -1,0 +1,34 @@
+version: "3"
+
+tasks:
+  default:
+    desc: "Display available tasks"
+    cmds:
+      - task --list
+
+  fmt:
+    desc: "Format Go source"
+    cmds:
+      - gofmt -w main.go internal/slidev/*.go internal/google/*.go
+
+  vet:
+    desc: "Run go vet"
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: "Format and vet"
+    deps: [fmt, vet]
+
+  test:unit:
+    desc: "Run unit tests"
+    cmds:
+      - go test -race ./...
+
+  test:
+    desc: "Run all tests"
+    deps: [test:unit]
+
+  check:
+    desc: "Format, vet, and test"
+    deps: [lint, test]
