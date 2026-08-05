@@ -34,14 +34,14 @@ jobs:
       github.ref == 'refs/heads/main'
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup svu
         if: github.event_name == 'workflow_dispatch'
-        uses: freerangebytes/setup-svu@v1
+        uses: freerangebytes/setup-svu@3dcc2ead4b6be1287f9bfe2ac4764a826c110a4f # v0.2.1
 
       - name: Create release tag
         if: github.event_name == 'workflow_dispatch'
@@ -64,13 +64,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Created release tag: $version"
 
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
