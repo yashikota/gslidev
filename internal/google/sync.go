@@ -123,9 +123,11 @@ func (c *Client) Sync(ctx context.Context, deck *slidev.Deck) (string, error) {
 		if notesID == "" {
 			return "", fmt.Errorf("speaker notes body not found on slide %d", i+1)
 		}
-		requests = append(requests, &slides.Request{DeleteText: &slides.DeleteTextRequest{
-			ObjectId: notesID, TextRange: &slides.Range{Type: "ALL"},
-		}})
+		if speakerNotesHaveText(page) {
+			requests = append(requests, &slides.Request{DeleteText: &slides.DeleteTextRequest{
+				ObjectId: notesID, TextRange: &slides.Range{Type: "ALL"},
+			}})
+		}
 		if rendered.Notes != "" {
 			requests = append(requests, &slides.Request{InsertText: &slides.InsertTextRequest{
 				ObjectId: notesID, Text: rendered.Notes,
@@ -165,6 +167,11 @@ func commitSlides(original, staged []*slides.Page, content []*slides.Request) ([
 		}
 		pages[staged[i].ObjectId] = original[i].ObjectId
 		notes[newNote] = oldNote
+		if speakerNotesHaveText(original[i]) {
+			requests = append(requests, &slides.Request{DeleteText: &slides.DeleteTextRequest{
+				ObjectId: oldNote, TextRange: &slides.Range{Type: "ALL"},
+			}})
+		}
 		for _, element := range original[i].PageElements {
 			requests = append(requests, &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: element.ObjectId}})
 		}
@@ -181,11 +188,7 @@ func commitSlides(original, staged []*slides.Page, content []*slides.Request) ([
 				requests = append(requests, &slides.Request{CreateImage: &image})
 			}
 		case req.DeleteText != nil:
-			if target, ok := notes[req.DeleteText.ObjectId]; ok {
-				text := *req.DeleteText
-				text.ObjectId = target
-				requests = append(requests, &slides.Request{DeleteText: &text})
-			}
+			// Original notes were cleared above based on their own content.
 		case req.InsertText != nil:
 			if target, ok := notes[req.InsertText.ObjectId]; ok {
 				text := *req.InsertText
@@ -329,11 +332,38 @@ func speakerNotesID(page *slides.Page) string {
 	return ""
 }
 
+// Google Slides rejects DeleteText ALL on an empty notes body.
+func speakerNotesHaveText(page *slides.Page) bool {
+	if page.SlideProperties == nil || page.SlideProperties.NotesPage == nil {
+		return false
+	}
+	for _, element := range page.SlideProperties.NotesPage.PageElements {
+		if element.ObjectId != speakerNotesID(page) || element.Shape == nil || element.Shape.Text == nil {
+			continue
+		}
+		for _, text := range element.Shape.Text.TextElements {
+			if text.TextRun != nil && strings.TrimSuffix(text.TextRun.Content, "\n") != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func pageSize(presentation *slides.Presentation) (float64, float64) {
 	if presentation.PageSize == nil || presentation.PageSize.Width == nil || presentation.PageSize.Height == nil {
 		return defaultSlideWidthPT, defaultSlideHeightPT
 	}
-	return presentation.PageSize.Width.Magnitude, presentation.PageSize.Height.Magnitude
+	return dimensionPT(presentation.PageSize.Width), dimensionPT(presentation.PageSize.Height)
+}
+
+// Slides commonly returns page sizes in EMU; imageRequest uses points.
+// One point is 12,700 English Metric Units.
+func dimensionPT(dimension *slides.Dimension) float64 {
+	if dimension.Unit == "EMU" {
+		return dimension.Magnitude / 12700
+	}
+	return dimension.Magnitude
 }
 
 func nonEmptySlice(value string) []string {

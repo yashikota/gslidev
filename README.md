@@ -37,7 +37,18 @@ The following options are available:
 --slidev-path      path to the slidev executable
 --verbose          enable debug logging
 --output           export PNGs, notes, GIFs, and manifest.json locally without contacting Google
+--pdf              export PDF directly from Slidev and upload beside the Google Slides presentation
 ```
+
+## PDF copy in Google Drive
+
+```console
+gslidev --pdf --presentation-id PRESENTATION_ID slides.md
+```
+
+`--pdf` runs Slidev's PDF exporter before synchronization, then uploads the exported PDF to the presentation's actual Google Drive folder. The PDF is named `<presentation title>.pdf`. Subsequent runs update the same generated PDF (identified by its source presentation ID), preserving its file ID and following the presentation if it moves folders. Unrelated PDFs with the same filename are not overwritten. A presentation in My Drive's root gets its PDF there too. A PDF upload failure is reported separately after a successful Slides sync.
+
+PDF export requires Slidev's PDF export dependencies (Playwright). `--chrome-path` is also passed to the PDF exporter. Each source slide produces one PDF page with final click state; GIFs and videos become static in PDF. `--pdf` cannot be combined with local-only `--output`.
 
 ## Google OAuth setup
 

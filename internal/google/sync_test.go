@@ -30,6 +30,10 @@ func TestSyncKeepsOriginalUntilStagedSlidesAreComplete(t *testing.T) {
 						t.Error(err)
 					}
 					for _, req := range batch.Requests {
+						if req.DeleteText != nil {
+							http.Error(w, `{"error":{"code":400,"message":"cannot delete empty notes"}}`, 400)
+							return
+						}
 						if req.CreateImage != nil && failure == "images" {
 							http.Error(w, `{"error":{"code":400,"message":"image failure"}}`, 400)
 							return
@@ -159,5 +163,37 @@ func TestCommitPreservesPagesAndReplacesNotes(t *testing.T) {
 	}
 	if image.CreateImage.ElementProperties.PageObjectId != "staged" {
 		t.Fatal("staging request was mutated")
+	}
+}
+
+func TestCommitClearsOnlyExistingNonemptyNotes(t *testing.T) {
+	for _, previous := range []string{"", "\n", "Old narration\n"} {
+		t.Run(fmt.Sprintf("notes=%q", previous), func(t *testing.T) {
+			old := testPage("old")
+			old.SlideProperties.NotesPage.PageElements[0].Shape.Text = &slides.TextContent{
+				TextElements: []*slides.TextElement{{TextRun: &slides.TextRun{Content: previous}}},
+			}
+			requests, err := commitSlides([]*slides.Page{old}, []*slides.Page{testPage("staged")}, []*slides.Request{
+				{InsertText: &slides.InsertTextRequest{ObjectId: "staged-notes", Text: "New narration"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleted, inserted := false, false
+			for _, req := range requests {
+				if req.DeleteText != nil {
+					if inserted {
+						t.Fatal("notes cleared after insertion")
+					}
+					deleted = req.DeleteText.ObjectId == "old-notes"
+				}
+				if req.InsertText != nil {
+					inserted = req.InsertText.ObjectId == "old-notes"
+				}
+			}
+			if deleted != (previous == "Old narration\n") || !inserted {
+				t.Fatalf("incorrect replacement: deleted=%v inserted=%v", deleted, inserted)
+			}
+		})
 	}
 }

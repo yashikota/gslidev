@@ -35,6 +35,7 @@ func run(ctx context.Context, args []string) error {
 	slidevPath := flags.String("slidev-path", "", "path to the slidev executable")
 	verbose := flags.Bool("verbose", false, "enable debug logging")
 	output := flags.String("output", "", "write rendered PNGs and notes locally without Google authorization")
+	pdf := flags.Bool("pdf", false, "export PDF from Slidev and upload it beside the Google Slides presentation")
 	version := flags.Bool("version", false, "print version")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -45,6 +46,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if flags.NArg() != 1 {
 		return errors.New("usage: gslidev [flags] slides.md")
+	}
+	if *pdf && *output != "" {
+		return errors.New("--pdf uploads to Google Drive and cannot be combined with --output")
 	}
 
 	level := slog.LevelInfo
@@ -74,6 +78,14 @@ func run(ctx context.Context, args []string) error {
 	if *output != "" {
 		return writePreview(*output, deck)
 	}
+	var pdfData []byte
+	if *pdf {
+		logger.Info("exporting PDF from Slidev")
+		pdfData, err = slidev.ExportPDFFile(ctx, flags.Arg(0), slidev.RenderOptions{ChromePath: *chromePath, SlidevPath: *slidevPath})
+		if err != nil {
+			return fmt.Errorf("export Slidev PDF: %w", err)
+		}
+	}
 
 	client, err := google.New(ctx, *profile)
 	if err != nil {
@@ -84,6 +96,13 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("sync Google Slides: %w", err)
 	}
 	fmt.Printf("https://docs.google.com/presentation/d/%s/edit\n", id)
+	if *pdf {
+		file, err := client.UploadPDF(ctx, id, pdfData)
+		if err != nil {
+			return fmt.Errorf("Google Slides synced, but PDF upload failed: %w", err)
+		}
+		fmt.Printf("https://drive.google.com/file/d/%s/view\n", file.Id)
+	}
 	return nil
 }
 
