@@ -128,10 +128,10 @@ func RenderFile(ctx context.Context, input string, deck *Deck, opts RenderOption
 		var screenshot []byte
 		actions := chromedp.Tasks{
 			chromedp.Navigate(fmt.Sprintf("%s/%d?print=true", baseURL, i+1)),
-			chromedp.WaitVisible(fmt.Sprintf(`[data-slidev-no="%d"]`, i+1)),
+			chromedp.WaitVisible(fmt.Sprintf(`[data-slidev-no="%d"]`, i+1), chromedp.ByQuery),
 			chromedp.Evaluate(fmt.Sprintf(waitForPageScript, i+1), nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 			chromedp.Evaluate(fmt.Sprintf(preparePageScript, i+1), &snap),
-			chromedp.Screenshot(`[data-gslidev-root="true"]`, &screenshot, chromedp.NodeVisible),
+			chromedp.Screenshot(fmt.Sprintf(`[data-slidev-no="%d"]`, i+1), &screenshot, chromedp.ByQuery, chromedp.NodeVisible),
 		}
 		if err := chromedp.Run(pageCtx, actions); err != nil {
 			var state string

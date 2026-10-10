@@ -22,6 +22,11 @@ func TestRenderResolvedPages(t *testing.T) {
 	if err := os.WriteFile(input, []byte(markdown), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A text search also finds this selector inside Vite's injected <style>.
+	// Page lookup must use a CSS query rather than DOM.performSearch.
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte(`[data-slidev-no="2"] .slidev-layout { font-size: 24px; }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "included.md"), []byte("## Imported page\n\nImported body\n\n<!-- Third note -->\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
