@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/yashikota/gslidev/internal/slidev"
@@ -55,12 +56,32 @@ func (c *Client) Sync(ctx context.Context, deck *slidev.Deck) (string, error) {
 		return "", fmt.Errorf("get presentation: %w", err)
 	}
 	pageWidth, pageHeight := pageSize(presentation)
-	if err := c.replaceSlides(ctx, presentation, len(deck.Slides)); err != nil {
+	original := presentation
+	stagedIDs, err := c.stageSlides(ctx, presentation, len(deck.Slides))
+	if err != nil {
 		return "", err
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			_ = c.deleteSlides(rollbackCtx, presentationID, stagedIDs)
+		}
+	}()
 	presentation, err = c.slides.Presentations.Get(presentationID).Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("refresh presentation: %w", err)
+	}
+	byID := make(map[string]*slides.Page)
+	for _, page := range presentation.Slides {
+		byID[page.ObjectId] = page
+	}
+	presentation.Slides = nil
+	for _, id := range stagedIDs {
+		if page := byID[id]; page != nil {
+			presentation.Slides = append(presentation.Slides, page)
+		}
 	}
 	if len(presentation.Slides) != len(deck.Slides) {
 		return "", fmt.Errorf("created %d slides, want %d", len(presentation.Slides), len(deck.Slides))
@@ -114,6 +135,15 @@ func (c *Client) Sync(ctx context.Context, deck *slidev.Deck) (string, error) {
 	if err := c.batchUpdate(ctx, presentationID, requests); err != nil {
 		return "", fmt.Errorf("update slides: %w", err)
 	}
+	// Commit only after every staged page has its images and speaker notes.
+	commitRequests, err := commitSlides(original.Slides, presentation.Slides, requests)
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.slides.Presentations.BatchUpdate(presentationID, &slides.BatchUpdatePresentationRequest{Requests: commitRequests}).Context(ctx).Do(); err != nil {
+		return "", fmt.Errorf("commit staged slides: %w", err)
+	}
+	committed = true
 	if err := cleanup(); err != nil {
 		uploaded = nil
 		return "", err
@@ -122,15 +152,62 @@ func (c *Client) Sync(ctx context.Context, deck *slidev.Deck) (string, error) {
 	return presentationID, nil
 }
 
-func (c *Client) replaceSlides(ctx context.Context, presentation *slides.Presentation, count int) error {
-	deleteRequests := make([]*slides.Request, 0, len(presentation.Slides))
-	for _, page := range presentation.Slides {
-		deleteRequests = append(deleteRequests, &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: page.ObjectId}})
+// Reuse existing page IDs by position. All replacements and removals are one
+// atomic batch, so invalid images or notes leave the original pages intact.
+func commitSlides(original, staged []*slides.Page, content []*slides.Request) ([]*slides.Request, error) {
+	pages := make(map[string]string)
+	notes := make(map[string]string)
+	var requests []*slides.Request
+	for i := 0; i < min(len(original), len(staged)); i++ {
+		oldNote, newNote := speakerNotesID(original[i]), speakerNotesID(staged[i])
+		if oldNote == "" || newNote == "" {
+			return nil, fmt.Errorf("speaker notes body not found on slide %d", i+1)
+		}
+		pages[staged[i].ObjectId] = original[i].ObjectId
+		notes[newNote] = oldNote
+		for _, element := range original[i].PageElements {
+			requests = append(requests, &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: element.ObjectId}})
+		}
 	}
-	if err := c.batchUpdate(ctx, presentation.PresentationId, deleteRequests); err != nil {
-		return fmt.Errorf("delete existing slides: %w", err)
+	for _, req := range content {
+		switch {
+		case req.CreateImage != nil:
+			if target, ok := pages[req.CreateImage.ElementProperties.PageObjectId]; ok {
+				image := *req.CreateImage
+				props := *image.ElementProperties
+				props.PageObjectId = target
+				image.ElementProperties = &props
+				image.ObjectId = "gslidev-image-" + uuid.NewString()
+				requests = append(requests, &slides.Request{CreateImage: &image})
+			}
+		case req.DeleteText != nil:
+			if target, ok := notes[req.DeleteText.ObjectId]; ok {
+				text := *req.DeleteText
+				text.ObjectId = target
+				requests = append(requests, &slides.Request{DeleteText: &text})
+			}
+		case req.InsertText != nil:
+			if target, ok := notes[req.InsertText.ObjectId]; ok {
+				text := *req.InsertText
+				text.ObjectId = target
+				requests = append(requests, &slides.Request{InsertText: &text})
+			}
+		}
 	}
+	for i, page := range staged {
+		if i < len(original) {
+			requests = append(requests, &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: page.ObjectId}})
+		}
+	}
+	for i, page := range original {
+		if i >= len(staged) {
+			requests = append(requests, &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: page.ObjectId}})
+		}
+	}
+	return requests, nil
+}
 
+func (c *Client) stageSlides(ctx context.Context, presentation *slides.Presentation, count int) ([]string, error) {
 	var blankLayout string
 	for _, layout := range presentation.Layouts {
 		if layout.LayoutProperties != nil && layout.LayoutProperties.Name == "BLANK" {
@@ -139,17 +216,48 @@ func (c *Client) replaceSlides(ctx context.Context, presentation *slides.Present
 		}
 	}
 	createRequests := make([]*slides.Request, count)
+	ids := make([]string, count)
 	for i := range createRequests {
-		create := &slides.CreateSlideRequest{InsertionIndex: int64(i)}
+		ids[i] = "gslidev-page-" + uuid.NewString()
+		create := &slides.CreateSlideRequest{ObjectId: ids[i], InsertionIndex: int64(len(presentation.Slides) + i)}
 		if blankLayout != "" {
 			create.SlideLayoutReference = &slides.LayoutReference{LayoutId: blankLayout}
 		}
 		createRequests[i] = &slides.Request{CreateSlide: create}
 	}
 	if err := c.batchUpdate(ctx, presentation.PresentationId, createRequests); err != nil {
-		return fmt.Errorf("create slides: %w", err)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		current, getErr := c.slides.Presentations.Get(presentation.PresentationId).Context(rollbackCtx).Do()
+		if getErr == nil {
+			wanted := make(map[string]bool)
+			for _, id := range ids {
+				wanted[id] = true
+			}
+			var created []string
+			for _, page := range current.Slides {
+				if wanted[page.ObjectId] {
+					created = append(created, page.ObjectId)
+				}
+			}
+			_ = c.deleteSlides(rollbackCtx, presentation.PresentationId, created)
+		}
+		return nil, fmt.Errorf("create staged slides: %w", err)
 	}
-	return nil
+	return ids, nil
+}
+
+func (c *Client) deleteSlides(ctx context.Context, presentationID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	requests := make([]*slides.Request, len(ids))
+	for i, id := range ids {
+		requests[i] = &slides.Request{DeleteObject: &slides.DeleteObjectRequest{ObjectId: id}}
+	}
+	// A single atomic batch avoids partially deleting the original presentation.
+	_, err := c.slides.Presentations.BatchUpdate(presentationID, &slides.BatchUpdatePresentationRequest{Requests: requests}).Context(ctx).Do()
+	return err
 }
 
 func (c *Client) batchUpdate(ctx context.Context, presentationID string, requests []*slides.Request) error {
