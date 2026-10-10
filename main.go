@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 
 	"github.com/yashikota/gslidev/internal/google"
@@ -32,6 +34,7 @@ func run(ctx context.Context, args []string) error {
 	chromePath := flags.String("chrome-path", "", "path to Chrome or Chromium")
 	slidevPath := flags.String("slidev-path", "", "path to the slidev executable")
 	verbose := flags.Bool("verbose", false, "enable debug logging")
+	output := flags.String("output", "", "write rendered PNGs and notes locally without Google authorization")
 	version := flags.Bool("version", false, "print version")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -63,9 +66,13 @@ func run(ctx context.Context, args []string) error {
 	if *folderID != "" {
 		deck.FolderID = *folderID
 	}
-	logger.Info("rendering Slidev presentation", slog.Int("slides", len(deck.Slides)))
+	logger.Info("rendering Slidev presentation")
 	if err := slidev.RenderFile(ctx, flags.Arg(0), deck, slidev.RenderOptions{ChromePath: *chromePath, SlidevPath: *slidevPath}); err != nil {
 		return fmt.Errorf("render slides: %w", err)
+	}
+	logger.Info("rendered Slidev presentation", slog.Int("slides", len(deck.Slides)))
+	if *output != "" {
+		return writePreview(*output, deck)
 	}
 
 	client, err := google.New(ctx, *profile)
@@ -78,6 +85,36 @@ func run(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("https://docs.google.com/presentation/d/%s/edit\n", id)
 	return nil
+}
+
+func writePreview(dir string, deck *slidev.Deck) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	manifest := make([]map[string]any, len(deck.Slides))
+	for i, page := range deck.Slides {
+		stem := fmt.Sprintf("%03d", i+1)
+		if err := os.WriteFile(filepath.Join(dir, stem+".png"), page.Screenshot, 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, stem+".txt"), []byte(page.Notes), 0o644); err != nil {
+			return err
+		}
+		var gifs []map[string]any
+		for j, gif := range page.GIFs {
+			name := fmt.Sprintf("%s-%02d.gif", stem, j+1)
+			if err := os.WriteFile(filepath.Join(dir, name), gif.Data, 0o644); err != nil {
+				return err
+			}
+			gifs = append(gifs, map[string]any{"file": name, "x": gif.X, "y": gif.Y, "width": gif.Width, "height": gif.Height})
+		}
+		manifest[i] = map[string]any{"slide": i + 1, "image": stem + ".png", "notes": stem + ".txt", "gifs": gifs}
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644)
 }
 
 func versionString() string {
