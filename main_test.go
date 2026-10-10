@@ -1,13 +1,22 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yashikota/gslidev/internal/slidev"
 )
+
+func TestPDFCannotUseLocalOnlyOutput(t *testing.T) {
+	err := run(context.Background(), []string{"--pdf", "--output", "preview", "does-not-exist.md"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("must reject before rendering or Google authorization: %v", err)
+	}
+}
 
 func TestPreviewKeepsNotesAndGIFPlacement(t *testing.T) {
 	dir := t.TempDir()
