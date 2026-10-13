@@ -9,7 +9,7 @@ gslidev slides.md
 gslidev --presentation-id PRESENTATION_ID slides.md
 ```
 
-If `--presentation-id` is omitted, a new Google Slides presentation is created. If it is supplied, the target presentation is updated. Existing page IDs are preserved by position; inserting or reordering source slides therefore changes the content associated with those positions. Manual page elements are replaced.
+If a presentation ID is supplied through `--presentation-id` or top-level headmatter, the target presentation is updated. Otherwise, a new Google Slides presentation is created. Existing page IDs are preserved by position; inserting or reordering source slides therefore changes the content associated with those positions. Manual page elements are replaced.
 
 New pages are staged before the existing content is changed. The final replacement is a single atomic Google Slides batch, so a rejected image or note update does not partially erase the original deck. If synchronization fails, temporary pages are removed on a best-effort basis.
 
@@ -20,11 +20,13 @@ The title and target IDs can also be stored in Slidev's headmatter:
 ```yaml
 ---
 title: My presentation
+presentationID: PRESENTATION_ID
 gslidev:
-  presentationID: PRESENTATION_ID
   folderID: DRIVE_FOLDER_ID
 ---
 ```
+
+`presentationID` is shared with deck and belongs at the top level. Move any existing `gslidev.presentationID` there; the nested key is no longer read. `--presentation-id` overrides the headmatter value. A new presentation is created only when neither specifies an ID.
 
 The following options are available:
 

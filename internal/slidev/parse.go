@@ -9,10 +9,10 @@ import (
 )
 
 type frontmatter struct {
-	Title   string `yaml:"title"`
-	GSlidev struct {
-		PresentationID string `yaml:"presentationID"`
-		FolderID       string `yaml:"folderID"`
+	Title          string `yaml:"title"`
+	PresentationID string `yaml:"presentationID"`
+	GSlidev        struct {
+		FolderID string `yaml:"folderID"`
 	} `yaml:"gslidev"`
 }
 
@@ -48,7 +48,7 @@ func Parse(b []byte) (*Deck, error) {
 	}
 	deck := &Deck{
 		Title:          fm.Title,
-		PresentationID: fm.GSlidev.PresentationID,
+		PresentationID: fm.PresentationID,
 		FolderID:       fm.GSlidev.FolderID,
 		Slides:         make([]Slide, len(parts)),
 	}

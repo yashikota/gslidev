@@ -5,8 +5,8 @@ import "testing"
 func TestParseFrontmatterAndNotes(t *testing.T) {
 	deck, err := Parse([]byte(`---
 title: Demo
+presentationID: pres
 gslidev:
-  presentationID: pres
   folderID: folder
 ---
 # One
@@ -27,6 +27,29 @@ second note
 	}
 	if len(deck.Slides) != 2 || deck.Slides[0].Notes != "first note" || deck.Slides[1].Notes != "second note" {
 		t.Fatalf("slides = %#v", deck.Slides)
+	}
+}
+
+func TestPresentationIDUsesTopLevelOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		headmatter string
+		want       string
+	}{
+		{"top-level", "presentationID: target\n", "target"},
+		{"conflicting nested ID", "presentationID: target\ngslidev:\n  presentationID: other\n", "target"},
+		{"nested ID is ignored", "gslidev:\n  presentationID: old\n", ""},
+		{"no ID", "title: Demo\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deck, err := Parse([]byte("---\n" + tc.headmatter + "---\n# Slide\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deck.PresentationID != tc.want {
+				t.Fatalf("presentation ID = %q, want %q", deck.PresentationID, tc.want)
+			}
+		})
 	}
 }
 
